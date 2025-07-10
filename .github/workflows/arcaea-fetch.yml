@@ -1,0 +1,101 @@
+name: Arcaea APK Auto Fetch
+
+on:
+  schedule:
+    - cron: '0,30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Fetch Arcaea APK info
+      id: fetch-info
+      run: |
+        echo "Fetching APK information..."
+        response=$(curl -s "https://arc.listder.xyz")
+        echo "Response: $response"
+        
+        success=$(echo "$response" | jq -r '.success')
+        if [ "$success" != "true" ]; then
+          echo "API request failed"
+          exit 1
+        fi
+        
+        version=$(echo "$response" | jq -r '.value.version')
+        url=$(echo "$response" | jq -r '.value.url')
+        
+        echo "Version: $version"
+        echo "URL: $url"
+
+        echo "version=$version" >> $GITHUB_OUTPUT
+        echo "url=$url" >> $GITHUB_OUTPUT
+    
+    - name: Check if version exists
+      id: check-version
+      run: |
+        version="${{ steps.fetch-info.outputs.version }}"
+
+        if git tag -l | grep -q "^$version$"; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Download APK
+      if: steps.check-version.outputs.exists == 'false'
+      run: |
+        version="${{ steps.fetch-info.outputs.version }}"
+        url="${{ steps.fetch-info.outputs.url }}"
+        filename="arcaea_${version}.apk"
+        
+        echo "Downloading from: $url"
+        curl -L -o "$filename" "$url"
+        
+        if [ ! -f "$filename" ]; then
+          echo "Failed to download"
+          exit 1
+        fi
+        
+        file_size=$(stat -c%s "$filename")
+        echo "Downloaded file size: $file_size bytes"
+        
+        echo "FILENAME=$filename" >> $GITHUB_ENV
+    
+    - name: Create tag and release
+      if: steps.check-version.outputs.exists == 'false'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        version="${{ steps.fetch-info.outputs.version }}"
+        filename="$FILENAME"
+        
+        echo "Creating tag $version..."
+        git config --local user.email "listder@listder.xyz"
+        git config --local user.name "bGlzdGRlcg"
+        
+        git tag "$version"
+        git push origin "$version"
+        
+        echo "Creating release $version..."
+        
+        gh release create "$version" \
+          --title "Arcaea $version" \
+          --notes "Arcaea $version" \
+          --latest \
+          "$filename"
+
+    
+    - name: Skip message
+      if: steps.check-version.outputs.exists == 'true'
+      run: |
+        version="${{ steps.fetch-info.outputs.version }}"
+        echo "Version $version already exists, skipping release creation"
