@@ -2,7 +2,7 @@ name: Arcaea APK Auto Fetch
 
 on:
   schedule:
-    - cron: '0,30 * * * *'
+    - cron: '50,20 * * * *'
   workflow_dispatch:
 
 jobs:
